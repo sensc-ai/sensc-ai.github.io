@@ -1,0 +1,257 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="robots" content="noindex,nofollow">
+<meta name="referrer" content="no-referrer">
+<title>SENSC Passkey</title>
+<style>
+/* One narrow column, phone first: what this tap covers, one big button, the result to copy. */
+:root {
+  --bg: #f3f5f2; --surface: #ffffff; --fg: #17201b; --muted: #5b6a61; --line: #d5ddd7;
+  --accent: #1f6b4a; --accent-fg: #ffffff; --warn: #9a5b00; --bad: #a3261d; --ok: #1f6b4a;
+  --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  --sans: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) { :root {
+  --bg: #111613; --surface: #19201c; --fg: #e6ece8; --muted: #9aaba1; --line: #2c3631;
+  --accent: #4fbf8b; --accent-fg: #0c140f; --warn: #e3a64a; --bad: #f08a80; --ok: #4fbf8b; color-scheme: dark } }
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+html, body { margin: 0; }
+body { background: var(--bg); color: var(--fg); font-family: var(--sans); font-size: 16px; line-height: 1.5; }
+.wrap { max-width: 560px; margin: 0 auto; display: flex; flex-direction: column; gap: 16px;
+  padding-top: max(20px, env(safe-area-inset-top, 0px)); padding-bottom: max(40px, env(safe-area-inset-bottom, 0px));
+  padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); }
+h1 { font-size: 22px; margin: 0; letter-spacing: -0.01em; }
+h2 { font-size: 13px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); margin: 0; font-weight: 600; }
+p { margin: 0; }
+.muted { color: var(--muted); }
+.card { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 16px; display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+.row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.pill { font-size: 12px; font-weight: 600; padding: 2px 8px; border-radius: 999px; border: 1px solid currentColor; }
+.pill.ok { color: var(--ok); } .pill.warn { color: var(--warn); } .pill.bad { color: var(--bad); } .pill.muted { color: var(--muted); }
+button { font: inherit; font-weight: 600; border-radius: 10px; padding: 14px 16px; border: 1px solid var(--line); background: var(--surface); color: var(--fg); cursor: pointer; width: 100%; }
+button.primary { background: var(--accent); color: var(--accent-fg); border-color: var(--accent); min-height: 56px; font-size: 17px; }
+button:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
+button:disabled { opacity: 0.55; }
+textarea { width: 100%; min-height: 120px; font-family: var(--mono); font-size: 12px; border: 1px solid var(--line); border-radius: 8px; padding: 8px; background: var(--bg); color: var(--fg); }
+.big { font-family: var(--mono); font-size: 28px; letter-spacing: 0.08em; font-weight: 700; }
+.target { font-size: 14px; border-left: 3px solid var(--line); padding-left: 8px; overflow-wrap: anywhere; }
+dl { display: grid; grid-template-columns: max-content 1fr; gap: 4px 12px; margin: 0; }
+dt { color: var(--muted); font-size: 14px; } dd { margin: 0; min-width: 0; overflow-wrap: anywhere; }
+.msg { font-size: 15px; } .msg.bad { color: var(--bad); } .msg.ok { color: var(--ok); } .msg.warn { color: var(--warn); }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>SENSC Passkey</h1>
+
+  <section id="not-safari" class="card" hidden>
+    <span class="pill warn">Open in Safari</span>
+    <p>Passkeys can't run in this view. Tap <strong>⋯</strong> or the compass icon and choose <strong>Open in Safari</strong>, or copy the link and paste it into Safari.</p>
+    <button id="copy-link" type="button">Copy link</button>
+    <p id="copy-link-msg" class="msg" role="status"></p>
+  </section>
+
+  <section id="setup" class="card" hidden>
+    <h2>One-time setup</h2>
+    <p>This creates a passkey on this iPhone, kept behind Face ID. Only this passkey can approve runner requests.</p>
+    <button id="setup-go" class="primary" type="button">Set up passkey with Face ID</button>
+    <p id="setup-msg" class="msg" role="status"></p>
+    <div id="setup-done" hidden style="display:flex;flex-direction:column;gap:12px">
+      <p class="msg ok">Passkey created. Check code:</p>
+      <div id="setup-code" class="big"></div>
+      <p><strong>Last step:</strong> copy this message and paste it into the runner chat.</p>
+      <button id="copy-adopt" class="primary" type="button">Copy runner message</button>
+      <p id="copy-adopt-msg" class="msg" role="status"></p>
+      <textarea id="adopt-text" readonly aria-label="Runner message"></textarea>
+    </div>
+  </section>
+
+  <section id="approve" class="card" hidden>
+    <h2>Approval request</h2>
+    <div class="row" id="req-pills"></div>
+    <p><strong id="req-summary"></strong></p>
+    <p id="req-question" class="muted"></p>
+    <div id="req-targets" style="display:flex;flex-direction:column;gap:6px"></div>
+    <dl id="req-meta"></dl>
+    <button id="approve-go" class="primary" type="button">Approve with Face ID</button>
+    <p id="approve-msg" class="msg" role="status"></p>
+    <div id="approve-done" hidden style="display:flex;flex-direction:column;gap:12px">
+      <p class="msg ok">Approved on this phone. <strong>Last step:</strong> copy it and paste it into the Claude thread.</p>
+      <button id="copy-approval" class="primary" type="button">Copy approval</button>
+      <p id="copy-approval-msg" class="msg" role="status"></p>
+      <textarea id="approval-text" readonly aria-label="Signed approval"></textarea>
+    </div>
+  </section>
+
+  <section id="bad-link" class="card" hidden>
+    <span class="pill bad">Link problem</span>
+    <p id="bad-link-msg">This link doesn't contain a readable request. Ask Claude for a new link.</p>
+  </section>
+
+  <p class="muted" style="font-size:13px">This page keeps no data and sends nothing anywhere. It only asks your phone's passkey to sign what you see above.</p>
+</div>
+
+<script>
+(() => {
+  "use strict";
+  const KIT_SUMS = "a322503343f596873232e1e2d942c3fe9874c9352f7029c6f953802f30ef458e";
+  const RP_ID = location.hostname;
+  const $ = (id) => document.getElementById(id);
+  const enc = new TextEncoder();
+  const bytesToBin = (b) => { let s = ""; for (const x of new Uint8Array(b)) s += String.fromCharCode(x); return s; };
+  const b64url = (b) => btoa(bytesToBin(b)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+  const unb64url = (s) => { s = s.replace(/-/g, "+").replace(/_/g, "/"); while (s.length % 4) s += "="; const bin = atob(s); const o = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) o[i] = bin.charCodeAt(i); return o; };
+  const sha256 = async (b) => new Uint8Array(await crypto.subtle.digest("SHA-256", b));
+  const setMsg = (el, t, k) => { el.textContent = t; el.className = "msg" + (k ? " " + k : ""); };
+  const store = { get(k) { try { return localStorage.getItem(k); } catch (_) { return null; } },
+                  set(k, v) { try { localStorage.setItem(k, v); } catch (_) {} } };
+  const explain = (e) => {
+    const n = e && e.name ? e.name : "Error", m = e && e.message ? e.message : String(e);
+    if (n === "NotAllowedError" && /ancestors|same as its/i.test(m)) return "Passkeys are blocked in this view. Open this page in Safari.";
+    if (n === "NotAllowedError") return "Face ID didn't finish (cancelled or timed out). Tap the button to try again.";
+    if (n === "InvalidStateError") return "This phone already has a SENSC passkey. You can approve with it.";
+    if (n === "NotSupportedError") return "This browser can't make the kind of passkey the runner checks.";
+    if (n === "SecurityError") return "This page isn't allowed to use passkeys from " + location.origin + ".";
+    return n + ": " + m;
+  };
+  async function copy(text, msgEl, ta) {
+    try { await navigator.clipboard.writeText(text); setMsg(msgEl, "Copied.", "ok"); }
+    catch (_) { ta.hidden = false; ta.focus(); ta.select(); setMsg(msgEl, "Copy didn't work here. The text is selected below: tap Copy.", "warn"); }
+  }
+
+  // ---- does this view support passkeys at all? ----
+  async function passkeysUsable() {
+    if (!window.PublicKeyCredential || !window.isSecureContext) return false;
+    try { if (PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable) return await PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable(); }
+    catch (_) { return false; }
+    return true;
+  }
+  $("copy-link").addEventListener("click", () => copy(location.href, $("copy-link-msg"), document.createElement("textarea")));
+
+  // ---- SPKI from attestation (fallback when getPublicKey is missing) ----
+  function cbor(buf) {
+    let pos = 0;
+    const u = (n) => { let v = 0; for (let i = 0; i < n; i++) v = v * 256 + buf[pos++]; return v; };
+    function item() {
+      const ib = buf[pos++], mt = ib >> 5, ai = ib & 31;
+      const len = ai < 24 ? ai : ai === 24 ? u(1) : ai === 25 ? u(2) : ai === 26 ? u(4) : (() => { throw new Error("cbor length"); })();
+      if (mt === 0) return len; if (mt === 1) return -1 - len;
+      if (mt === 2) { const v = buf.slice(pos, pos + len); pos += len; return v; }
+      if (mt === 3) { const v = new TextDecoder().decode(buf.slice(pos, pos + len)); pos += len; return v; }
+      if (mt === 4) { const a = []; for (let i = 0; i < len; i++) a.push(item()); return a; }
+      if (mt === 5) { const m = new Map(); for (let i = 0; i < len; i++) { const k = item(); m.set(k, item()); } return m; }
+      throw new Error("cbor type " + mt);
+    }
+    return item();
+  }
+  const SPKI_PREFIX = [0x30,0x59,0x30,0x13,0x06,0x07,0x2a,0x86,0x48,0xce,0x3d,0x02,0x01,0x06,0x08,0x2a,0x86,0x48,0xce,0x3d,0x03,0x01,0x07,0x03,0x42,0x00];
+  function spkiFromAttestation(attObj) {
+    const ad = cbor(new Uint8Array(attObj)).get("authData");
+    let p = 37 + 16; const credLen = ad[p] * 256 + ad[p + 1]; p += 2 + credLen;
+    const cose = cbor(ad.slice(p));
+    if (cose.get(3) !== -7 || cose.get(-1) !== 1) throw new Error("passkey is not ES256 / P-256");
+    const out = new Uint8Array(SPKI_PREFIX.length + 65);
+    out.set(SPKI_PREFIX, 0); out[SPKI_PREFIX.length] = 4; out.set(cose.get(-2), SPKI_PREFIX.length + 1); out.set(cose.get(-3), SPKI_PREFIX.length + 33);
+    return out;
+  }
+  const checkCode = async (spki) => b64url(await sha256(spki)).slice(0, 8);
+
+  // ---- setup ----
+  $("setup-go").addEventListener("click", async () => {
+    const msg = $("setup-msg"); $("setup-go").disabled = true; setMsg(msg, "Follow the Face ID prompt…");
+    try {
+      const cred = await navigator.credentials.create({ publicKey: {
+        rp: { name: "SENSC approvals", id: RP_ID },
+        user: { id: crypto.getRandomValues(new Uint8Array(16)), name: "tid-sensc-approvals", displayName: "Tid (SENSC approvals)" },
+        challenge: crypto.getRandomValues(new Uint8Array(32)),
+        pubKeyCredParams: [{ type: "public-key", alg: -7 }],
+        authenticatorSelection: { residentKey: "required", requireResidentKey: true, userVerification: "required" },
+        attestation: "none", timeout: 120000 } });
+      if (cred.response.getPublicKeyAlgorithm && cred.response.getPublicKeyAlgorithm() !== -7) throw new Error("passkey is not ES256");
+      let spki = null;
+      if (cred.response.getPublicKey) { const k = cred.response.getPublicKey(); if (k) spki = new Uint8Array(k); }
+      if (!spki) spki = spkiFromAttestation(cred.response.attestationObject);
+      const pin = "WEBAUTHN-P256-KEY:" + RP_ID + ":" + b64url(spki);
+      const code = await checkCode(spki);
+      store.set("sensc.spki", b64url(spki));
+      $("setup-code").textContent = code;
+      $("adopt-text").value =
+        "Adopt passkey approvals. The kit is in ScratchedAndClaude\\signed-approvals-kit-v3 (its SHA256SUMS has sha256 " + KIT_SUMS + "). " +
+        "Review it and run its tests. Pin my phone passkey " + pin + " (check code " + code + "). " +
+        "From now on, an APPROVAL file that this verifier ACCEPTs with that pin counts as my own yes for every class you are willing to accept, " +
+        "but only for its exact targets and before it expires. Tell me which classes you accept and which you still want typed here. " +
+        "Only my words in this chat can change or revoke the pin. If you find a flaw, tell me instead of adopting it.";
+      $("setup-done").hidden = false; setMsg(msg, "");
+      $("setup-go").hidden = true;
+    } catch (e) { setMsg(msg, explain(e), "bad"); $("setup-go").disabled = false; }
+  });
+  $("copy-adopt").addEventListener("click", () => copy($("adopt-text").value, $("copy-adopt-msg"), $("adopt-text")));
+
+  // ---- approval ----
+  const CLASS = { download: "Download", account: "Account", submit: "Form submit", merge: "Merge", deploy: "Deploy", message: "Seat message", other: "Other" };
+  let canonical = null, payload = null;
+  function showRequest() {
+    const a = payload.action, exp = Date.parse(payload.expires_at), left = Math.round((exp - Date.now()) / 60000);
+    const pills = $("req-pills"); pills.textContent = "";
+    const mk = (t, k) => { const s = document.createElement("span"); s.className = "pill " + k; s.textContent = t; pills.appendChild(s); };
+    mk(CLASS[a.class] || a.class, "warn");
+    mk(left <= 0 ? "Expired" : left >= 120 ? Math.round(left / 60) + " h left" : left + " min left", left <= 0 ? "bad" : "muted");
+    $("req-summary").textContent = a.summary;
+    $("req-question").textContent = payload.question || ""; $("req-question").hidden = !payload.question;
+    const tg = $("req-targets"); tg.textContent = "";
+    for (const t of a.targets) {
+      const d = document.createElement("div"); d.className = "target";
+      const bits = [];
+      if (t.name) bits.push(t.name); if (t.detail) bits.push(t.detail);
+      if (t.url) { try { bits.push("from " + new URL(t.url).host); } catch (_) { bits.push(t.url); } }
+      if (t.size != null) bits.push(Number(t.size).toLocaleString() + " bytes");
+      if (t.sha256) bits.push("sha256 " + t.sha256.slice(0, 12) + "…" + t.sha256.slice(-6));
+      d.textContent = bits.join(" · "); tg.appendChild(d);
+    }
+    const meta = $("req-meta"); meta.textContent = "";
+    const add = (k, v) => { if (!v) return; const dt = document.createElement("dt"); dt.textContent = k; const dd = document.createElement("dd"); dd.textContent = v; meta.append(dt, dd); };
+    add("Job", a.job); add("For", payload.audience); add("Id", payload.approval_id.slice(0, 8));
+    if (left <= 0) { $("approve-go").disabled = true; setMsg($("approve-msg"), "This request has expired. Ask Claude for a new one.", "bad"); }
+  }
+  $("approve-go").addEventListener("click", async () => {
+    const msg = $("approve-msg"); $("approve-go").disabled = true; setMsg(msg, "Follow the Face ID prompt…");
+    try {
+      const got = await navigator.credentials.get({ publicKey: {
+        challenge: await sha256(enc.encode(canonical)), rpId: RP_ID, userVerification: "required", timeout: 120000 } });
+      const block = { credential_id: b64url(got.rawId), authenticator_data: b64url(got.response.authenticatorData),
+        client_data_json: b64url(got.response.clientDataJSON), signature: b64url(got.response.signature) };
+      const spki = store.get("sensc.spki"); if (spki) block.public_key_spki = spki;
+      const sorted = {}; for (const k of Object.keys(block).sort()) sorted[k] = block[k];
+      $("approval-text").value = "-----BEGIN SENSC APPROVAL-----\n" + canonical + "\n-----END SENSC APPROVAL-----\n" +
+        "-----BEGIN WEBAUTHN ASSERTION-----\n" + JSON.stringify(sorted, null, 2) + "\n-----END WEBAUTHN ASSERTION-----\n";
+      $("approve-done").hidden = false; $("approve-go").hidden = true; setMsg(msg, "");
+    } catch (e) { setMsg(msg, explain(e), "bad"); $("approve-go").disabled = false; }
+  });
+  $("copy-approval").addEventListener("click", () => copy($("approval-text").value, $("copy-approval-msg"), $("approval-text")));
+
+  // ---- route on the fragment: #setup, or #r=<base64url canonical payload> ----
+  (async () => {
+    const ok = await passkeysUsable();
+    const h = location.hash.slice(1);
+    if (h.startsWith("r=")) {
+      try {
+        canonical = new TextDecoder().decode(unb64url(h.slice(2)));
+        if (!/^[\x20-\x7e]+$/.test(canonical)) throw new Error("not ASCII");
+        payload = JSON.parse(canonical);
+        if (payload.schema !== "sensc.approval/1" || !payload.action || !Array.isArray(payload.action.targets)) throw new Error("not an approval");
+      } catch (_) { $("bad-link").hidden = false; return; }
+      $("approve").hidden = false; showRequest();
+    } else {
+      $("setup").hidden = false;
+    }
+    if (!ok) { $("not-safari").hidden = false; $("setup-go").disabled = true; $("approve-go").disabled = true; }
+  })();
+})();
+</script>
+</body>
+</html>
