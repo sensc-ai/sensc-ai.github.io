@@ -37,6 +37,10 @@ button { font: inherit; font-weight: 600; border-radius: 10px; padding: 14px 16p
 button.primary { background: var(--accent); color: var(--accent-fg); border-color: var(--accent); min-height: 56px; font-size: 17px; }
 button:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
 button:disabled { opacity: 0.55; }
+a.btn { display: flex; align-items: center; justify-content: center; text-decoration: none; font-weight: 600; border-radius: 10px; padding: 14px 16px; }
+a.btn.primary { background: var(--accent); color: var(--accent-fg); min-height: 56px; font-size: 17px; }
+a.btn:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
+button.link { background: none; border: none; color: var(--muted); font-weight: 500; font-size: 14px; padding: 6px; text-decoration: underline; }
 textarea { width: 100%; min-height: 120px; font-family: var(--mono); font-size: 12px; border: 1px solid var(--line); border-radius: 8px; padding: 8px; background: var(--bg); color: var(--fg); }
 .big { font-family: var(--mono); font-size: 28px; letter-spacing: 0.08em; font-weight: 700; }
 .target { font-size: 14px; border-left: 3px solid var(--line); padding-left: 8px; overflow-wrap: anywhere; }
@@ -62,12 +66,15 @@ dt { color: var(--muted); font-size: 14px; } dd { margin: 0; min-width: 0; overf
     <button id="setup-go" class="primary" type="button">Set up passkey with Face ID</button>
     <p id="setup-msg" class="msg" role="status"></p>
     <div id="setup-done" hidden style="display:flex;flex-direction:column;gap:12px">
-      <p class="msg ok">Passkey created. Check code:</p>
+      <p class="msg ok" id="setup-state">Passkey created. Your check code:</p>
       <div id="setup-code" class="big"></div>
-      <p><strong>Last step:</strong> copy this message and paste it into the runner chat.</p>
-      <button id="copy-adopt" class="primary" type="button">Copy runner message</button>
+      <p><strong>Last step:</strong> tap Send. It opens an email to you that's already written; just send it.</p>
+      <a id="send-setup" class="btn primary" href="#">Send to runner</a>
+      <p class="muted" style="font-size:14px">The runner will ask you once, in its chat, to type this code. You can see it again here any time.</p>
+      <button id="copy-adopt" type="button" class="link">Can't send email? Copy it instead</button>
       <p id="copy-adopt-msg" class="msg" role="status"></p>
-      <textarea id="adopt-text" readonly aria-label="Runner message"></textarea>
+      <textarea id="adopt-text" readonly aria-label="Runner message" hidden></textarea>
+      <button id="setup-again" type="button" class="link" hidden>Make a new passkey instead</button>
     </div>
   </section>
 
@@ -81,10 +88,11 @@ dt { color: var(--muted); font-size: 14px; } dd { margin: 0; min-width: 0; overf
     <button id="approve-go" class="primary" type="button">Approve with Face ID</button>
     <p id="approve-msg" class="msg" role="status"></p>
     <div id="approve-done" hidden style="display:flex;flex-direction:column;gap:12px">
-      <p class="msg ok">Approved on this phone. <strong>Last step:</strong> copy it and paste it into the Claude thread.</p>
-      <button id="copy-approval" class="primary" type="button">Copy approval</button>
+      <p class="msg ok">Approved on this phone. <strong>Last step:</strong> tap Send. It opens an email to you that's already written; just send it.</p>
+      <a id="send-approval" class="btn primary" href="#">Send approval</a>
+      <button id="copy-approval" type="button" class="link">Can't send email? Copy it instead</button>
       <p id="copy-approval-msg" class="msg" role="status"></p>
-      <textarea id="approval-text" readonly aria-label="Signed approval"></textarea>
+      <textarea id="approval-text" readonly aria-label="Signed approval" hidden></textarea>
     </div>
   </section>
 
@@ -93,14 +101,15 @@ dt { color: var(--muted); font-size: 14px; } dd { margin: 0; min-width: 0; overf
     <p id="bad-link-msg">This link doesn't contain a readable request. Ask Claude for a new link.</p>
   </section>
 
-  <p class="muted" style="font-size:13px">This page keeps no data and sends nothing anywhere. It only asks your phone's passkey to sign what you see above.</p>
+  <p class="muted" style="font-size:13px">This page has no server and keeps nothing. It only asks your phone's passkey to sign what you see above. Nothing leaves your phone unless you tap Send, which opens an email to you.</p>
 </div>
 
 <script>
 (() => {
   "use strict";
-  const KIT_SUMS = "a322503343f596873232e1e2d942c3fe9874c9352f7029c6f953802f30ef458e";
+  const KIT_SUMS = "e7dc5ddad7fa3e97b2609b89dca72240350ebdb46de8b5c80ce919004c8cf59c";
   const RP_ID = location.hostname;
+  let MAIL_TO = "";
   const $ = (id) => document.getElementById(id);
   const enc = new TextEncoder();
   const bytesToBin = (b) => { let s = ""; for (const x of new Uint8Array(b)) s += String.fromCharCode(x); return s; };
@@ -159,7 +168,29 @@ dt { color: var(--muted); font-size: 14px; } dd { margin: 0; min-width: 0; overf
     out.set(SPKI_PREFIX, 0); out[SPKI_PREFIX.length] = 4; out.set(cose.get(-2), SPKI_PREFIX.length + 1); out.set(cose.get(-3), SPKI_PREFIX.length + 33);
     return out;
   }
-  const checkCode = async (spki) => b64url(await sha256(spki)).slice(0, 8);
+  // Check code: first 40 bits of SHA-256(SPKI), lowercase base32 (a-z, 2-7). The runner computes the same from the pin.
+  const checkCode = async (spki) => {
+    const h = await sha256(spki), A = "abcdefghijklmnopqrstuvwxyz234567";
+    let bits = 0, val = 0, out = "";
+    for (let i = 0; i < 5; i++) { val = (val << 8) | h[i]; bits += 8; while (bits >= 5) { out += A[(val >> (bits - 5)) & 31]; bits -= 5; } }
+    return out;
+  };
+  // Mail body: the text as base64url in 64-char lines between markers, so mail wrapping can't break it.
+  const mailBlob = (text) => { const b = b64url(enc.encode(text)); const lines = []; for (let i = 0; i < b.length; i += 64) lines.push(b.slice(i, i + 64)); return "-----BEGIN SENSC MAIL-----\n" + lines.join("\n") + "\n-----END SENSC MAIL-----\n"; };
+  const mailto = (subject, intro, text) => "mailto:" + encodeURIComponent(MAIL_TO).replace(/%40/g, "@") + "?subject=" + encodeURIComponent(subject) +
+    "&body=" + encodeURIComponent(intro + "\n\n" + mailBlob(text));
+  function showSetup(spkiB64, fresh) {
+    const spki = unb64url(spkiB64), pin = "WEBAUTHN-P256-KEY:" + RP_ID + ":" + spkiB64;
+    return checkCode(spki).then((code) => {
+      $("setup-code").textContent = code;
+      $("setup-state").textContent = fresh ? "Passkey created. Your check code:" : "This phone is set up. Your check code:";
+      const text = "SENSC passkey setup\ncheck_code: " + code + "\npin: " + pin + "\nkit: signed-approvals-kit-v4 SHA256SUMS sha256 " + KIT_SUMS + "\n";
+      $("adopt-text").value = text;
+      $("send-setup").href = mailto("SENSC passkey setup " + code, "Passkey setup for the runner. Check code " + code + ". Please send this email as it is.", text);
+      $("setup-done").hidden = false; $("setup-go").hidden = true; $("setup-again").hidden = fresh;
+    });
+  }
+  $("setup-again").addEventListener("click", () => { $("setup-done").hidden = true; $("setup-go").hidden = false; $("setup-go").disabled = false; });
 
   // ---- setup ----
   $("setup-go").addEventListener("click", async () => {
@@ -176,18 +207,8 @@ dt { color: var(--muted); font-size: 14px; } dd { margin: 0; min-width: 0; overf
       let spki = null;
       if (cred.response.getPublicKey) { const k = cred.response.getPublicKey(); if (k) spki = new Uint8Array(k); }
       if (!spki) spki = spkiFromAttestation(cred.response.attestationObject);
-      const pin = "WEBAUTHN-P256-KEY:" + RP_ID + ":" + b64url(spki);
-      const code = await checkCode(spki);
       store.set("sensc.spki", b64url(spki));
-      $("setup-code").textContent = code;
-      $("adopt-text").value =
-        "Adopt passkey approvals. The kit is in ScratchedAndClaude\\signed-approvals-kit-v3 (its SHA256SUMS has sha256 " + KIT_SUMS + "). " +
-        "Review it and run its tests. Pin my phone passkey " + pin + " (check code " + code + "). " +
-        "From now on, an APPROVAL file that this verifier ACCEPTs with that pin counts as my own yes for every class you are willing to accept, " +
-        "but only for its exact targets and before it expires. Tell me which classes you accept and which you still want typed here. " +
-        "Only my words in this chat can change or revoke the pin. If you find a flaw, tell me instead of adopting it.";
-      $("setup-done").hidden = false; setMsg(msg, "");
-      $("setup-go").hidden = true;
+      await showSetup(b64url(spki), true); setMsg(msg, "");
     } catch (e) { setMsg(msg, explain(e), "bad"); $("setup-go").disabled = false; }
   });
   $("copy-adopt").addEventListener("click", () => copy($("adopt-text").value, $("copy-adopt-msg"), $("adopt-text")));
@@ -227,8 +248,10 @@ dt { color: var(--muted); font-size: 14px; } dd { margin: 0; min-width: 0; overf
         client_data_json: b64url(got.response.clientDataJSON), signature: b64url(got.response.signature) };
       const spki = store.get("sensc.spki"); if (spki) block.public_key_spki = spki;
       const sorted = {}; for (const k of Object.keys(block).sort()) sorted[k] = block[k];
-      $("approval-text").value = "-----BEGIN SENSC APPROVAL-----\n" + canonical + "\n-----END SENSC APPROVAL-----\n" +
+      const text = "-----BEGIN SENSC APPROVAL-----\n" + canonical + "\n-----END SENSC APPROVAL-----\n" +
         "-----BEGIN WEBAUTHN ASSERTION-----\n" + JSON.stringify(sorted, null, 2) + "\n-----END WEBAUTHN ASSERTION-----\n";
+      $("approval-text").value = text;
+      $("send-approval").href = mailto("SENSC APPROVAL " + payload.approval_id, "Signed approval: " + payload.action.summary + "\nPlease send this email as it is.", text);
       $("approve-done").hidden = false; $("approve-go").hidden = true; setMsg(msg, "");
     } catch (e) { setMsg(msg, explain(e), "bad"); $("approve-go").disabled = false; }
   });
@@ -237,10 +260,11 @@ dt { color: var(--muted); font-size: 14px; } dd { margin: 0; min-width: 0; overf
   // ---- route on the fragment: #setup, or #r=<base64url canonical payload> ----
   (async () => {
     const ok = await passkeysUsable();
-    const h = location.hash.slice(1);
-    if (h.startsWith("r=")) {
+    const P = {}; for (const part of location.hash.slice(1).split("&")) { const i = part.indexOf("="); if (i < 0) P[part] = ""; else P[part.slice(0, i)] = part.slice(i + 1); }
+    try { if (P.to && /^[^\s@<>"]+@[^\s@<>"]+$/.test(decodeURIComponent(P.to))) MAIL_TO = decodeURIComponent(P.to); } catch (_) {}
+    if (P.r !== undefined) {
       try {
-        canonical = new TextDecoder().decode(unb64url(h.slice(2)));
+        canonical = new TextDecoder().decode(unb64url(P.r));
         if (!/^[\x20-\x7e]+$/.test(canonical)) throw new Error("not ASCII");
         payload = JSON.parse(canonical);
         if (payload.schema !== "sensc.approval/1" || !payload.action || !Array.isArray(payload.action.targets)) throw new Error("not an approval");
@@ -248,6 +272,7 @@ dt { color: var(--muted); font-size: 14px; } dd { margin: 0; min-width: 0; overf
       $("approve").hidden = false; showRequest();
     } else {
       $("setup").hidden = false;
+      const have = store.get("sensc.spki"); if (have) { try { await showSetup(have, false); } catch (_) {} }
     }
     if (!ok) { $("not-safari").hidden = false; $("setup-go").disabled = true; $("approve-go").disabled = true; }
   })();
